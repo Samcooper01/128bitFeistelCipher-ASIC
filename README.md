@@ -1,6 +1,6 @@
-![ASIC_IMG](asic/optimizations/Images/gds_render.png)
-# 128-bit Streaming Feistel Cipher 
 
+# 128-bit Streaming 6‑Round Feistel Cipher — RTL to ASIC
+![SYS_IMG](sys_image.png)
 ## Project Abstract
 
 This project implements, verifies, and analyzes a 6‑round, 8‑bit streaming Feistel cipher across C (golden model), FPGA‑friendly RTL, and an ASIC synthesis/timing/power flow,completed in one weekend. A byte‑accurate C reference model established correctness and produced expected ciphertext/roundtrip vectors. The RTL core ([hdl_sim/feistelCipher128by6_opt.v](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opt.v:0:0-0:0)) realizes a single‑cycle, 6‑round compute with a 1‑cycle output pipeline and operand gating, wrapped by a simple command protocol for key load, `start_idx` set, and streaming. A self‑checking SystemVerilog testbench ([hdl_sim/feistelCipher128by6_opttb.sv](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opttb.sv:0:0-0:0)) drives realistic streams, aligns prime/drain latency, and validates roundtrip integrity while emitting artifacts to `hdl_sim/tests/{ciphertext,roundtrip}/`.
@@ -51,7 +51,7 @@ For ASIC evaluation, the design was synthesized in two variants (baseline and op
   - `hdl_sim/tests/scripts/run_all_tests.sh` runs the suite (XSim), generates outputs, and performs self-checks.
 
 ## ASIC (Synthesis, Timing, Power)
-
+![ASIC_IMG](asic/optimizations/Images/gds_render.png)
 - **[report locations]**
   - Non-optimized: `asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
   - Optimized: `asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
@@ -165,3 +165,9 @@ For ASIC evaluation, the design was synthesized in two variants (baseline and op
   - Non-optimized total: ~4.213 mW (`asic/no_optimizations/.../power.rpt`)
   - Optimized total: ~6.074 mW (`asic/optimizations/.../power.rpt`)
   - Note: Vectorless power does not reflect operand gating benefits. Use activity-based power for realistic results.
+ 
+  ## Acknowledgments
+
+- This project’s RTL→ASIC exploration leveraged the TinyTapeout design flow.
+- TinyTapeout provides an educational, open workflow for taking small RTL designs through synthesis, place & route, and onto multi‑project silicon shuttles.
+- Learn more: https://tinytapeout.com • https://github.com/TinyTapeout
