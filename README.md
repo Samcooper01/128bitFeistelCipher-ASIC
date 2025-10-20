@@ -1,65 +1,107 @@
-# 128-bit Feistel Cipher (RTL + TB + Batch Runner)
+![ASIC_IMG](asic/optimizations/Images/gds_render.png)
+# 128-bit Streaming Feistel Cipher 
 
-A small educational Feistel cipher core with a modular, self‑checking SystemVerilog testbench and a WSL→Windows Vivado batch script. The goal is to demonstrate end‑to‑end RTL + verification + automation under time constraints.
+## Project Abstract
 
-> Note: The cipher is pedagogical (4‑bit halves, 6 rounds, partial key mixing) and not cryptographically secure. See “Roadmap” for hardening options.
+This project implements, verifies, and analyzes a 6‑round, 8‑bit streaming Feistel cipher across C (golden model), FPGA‑friendly RTL, and an ASIC synthesis/timing/power flow,completed in one weekend. A byte‑accurate C reference model established correctness and produced expected ciphertext/roundtrip vectors. The RTL core ([hdl_sim/feistelCipher128by6_opt.v](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opt.v:0:0-0:0)) realizes a single‑cycle, 6‑round compute with a 1‑cycle output pipeline and operand gating, wrapped by a simple command protocol for key load, `start_idx` set, and streaming. A self‑checking SystemVerilog testbench ([hdl_sim/feistelCipher128by6_opttb.sv](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opttb.sv:0:0-0:0)) drives realistic streams, aligns prime/drain latency, and validates roundtrip integrity while emitting artifacts to `hdl_sim/tests/{ciphertext,roundtrip}/`.
+
+For ASIC evaluation, the design was synthesized in two variants (baseline and optimized key/logic organization) and characterized at `nom_ff_n40C_1v95` (Fast-Fast process, -40C, 1.95V). Reports in `asic/{no_optimizations,optimizations}/STA_n_POWER/nom_ff_n40C_1v95/` include internal minimum period, worst reg→reg paths, and vectorless power. The repository documents methodology, results, and concise reproduction steps to regenerate simulation outputs, STA, and power reports. Overall, the weekend deliverable demonstrates end‑to‑end implementation, verification, and ASIC feasibility with clear interfaces, automated checks, and reproducible metrics.
+
+## C Simulation Golden Model
+
+- **[purpose]** Byte-accurate reference of the 6-round Feistel algorithm to validate RTL and produce expected ciphertext/roundtrip.
+- **[algorithm]**
+  - 4-bit halves `L`, `R`; 6 rounds.
+  - Round: `F(x,K) = (x + K) ^ rotl1(x)` on 4-bit nibbles.
+  - Encrypt uses subkeys with `start_idx` for rounds r=0..5 (operate on `R`); decrypt r=5..0 (operate on `L`).
+- **[I/O]**
+  - Inputs: 16-byte key, byte stream plaintext, 1-byte `start_idx`.
+  - Outputs: ciphertext; decrypting ciphertext returns original plaintext.
+- **[usage]**
+  - Run to emit ciphertext and roundtrip vectors; compare byte-wise to RTL outputs as the golden reference.
+
+## RTL Model
+
+- **[files]**
+  - Core RTL: [hdl_sim/feistelCipher128by6_opt.v](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opt.v:0:0-0:0) (final optimized single-cycle).
+  - Testbench: [hdl_sim/feistelCipher128by6_opttb.sv](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opttb.sv:0:0-0:0) (self-checking).
+- **[interface]**
+  - `ui_in[7:0]`: command/data input.
+  - `uo_out[7:0]`: byte output (1-cycle output pipeline).
+  - `uio_in[0]`: mode (0=encrypt, 1=decrypt), latched when not streaming.
+  - `uio_in[1]`: stop pulse during streaming.
+- **[protocol]**
+  - From `SYS_IDLE`:
+    - Write `0x01` then 16 key bytes (MSB-first) to load key.
+    - Write `0x0F` then 1 byte to set `start_idx`.
+    - Write `0x02` to enter streaming; present data bytes on `ui_in`.
+    - Pulse `uio_in[1]` to stop and return to idle.
+- **[final RTL configuration]**
+  - Single-cycle 6-round compute (no internal round pipeline).
+  - 1-cycle output register with valid: `uo_out = out_valid ? feistel_out_q : 8'h00`.
+  - Key stored as bytes (`key_bytes[curr_seg]`) to avoid variable barrel slice.
+  - `sys_next_state` defaults to `sys_state` in comb logic.
+  - Operand gating: compute only in `SYS_STREAMING`; else drive zeros to reduce switching.
+- **[TB behavior]**
+  - 1-cycle prime before first capture, 1-cycle drain after last input.
+  - Self-checks roundtrip; writes artifacts:
+    - `hdl_sim/tests/ciphertext/ciphertext<i>.bin`
+    - `hdl_sim/tests/roundtrip/roundtrip<i>.bin`
+- **[how to run]**
+  - `hdl_sim/tests/scripts/run_all_tests.sh` runs the suite (XSim), generates outputs, and performs self-checks.
+
+## ASIC (Synthesis, Timing, Power)
+
+- **[report locations]**
+  - Non-optimized: `asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
+  - Optimized: `asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
+  - Includes: [clock.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt:0:0-0:0) (min period), [max.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt:0:0-0:0) (reg→reg worst paths), [power.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt:0:0-0:0) (vectorless).
+- **[timing @ nom_ff_n40C_1v95]**
+  - Internal min period (period_min):
+    - Non-optimized: `1.47 ns` → ~682.39 MHz
+    - Optimized: `5.05 ns` → ~197.88 MHz
+  - Worst reg→reg path (from [max.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt:0:0-0:0)):
+    - Non-optimized: ~`0.926046 ns` (`_1147_ → _1145_`)
+    - Optimized: ~`0.838149 ns` (`_1050_ → _1036_`)
+  - Note: `period_min` alone can be misleading when internal reg paths are trivial; use worst reg→reg delay and WNS/TNS at a fixed period for fair comparison.
+- **[power (vectorless, same corner)]**
+  - Non-optimized total: ~`4.213 mW`
+  - Optimized total: ~`6.074 mW`
+  - Note: Vectorless ignores operand-gating benefits. For realistic power:
+    - Dump VCD during TB: `$dumpfile("wave.vcd"); $dumpvars(0, feistelCipher128by6_tb);`
+    - Convert to SAIF: `vcd2saif -input wave.vcd -output activity.saif -instance feistelCipher128by6_tb.iDUT`
+    - Re-run `report_power` with SAIF for both builds.
+- **[reproduce]**
+  - Sim: run TB to generate ciphertext/roundtrip (and optionally VCD).
+  - STA/Power: run the ASIC flow at `nom_ff_n40C_1v95` to produce [clock.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt:0:0-0:0), [max.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt:0:0-0:0), and [power.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt:0:0-0:0) (and `power_saif.rpt` if using activity).
 
 ## Layout
 
-- `hdl_sim/feistelCipher128by6.v` — RTL core `tt_um_Samcooper01`
-- `hdl_sim/feistelCipher128by6_tb.sv` — self‑checking testbench (tasks, assertions)
-- `hdl_sim/tests/keys/.privatekey<i>` — 16‑byte keys (e.g., `.privatekey0`, `.privatekey1`)
+- [README.md](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/README.md:0:0-0:0) — project overview, results, and reproduction steps
+
+- `c_sim/src/feistelCipher128by6.c` — C golden model (byte-accurate reference)
+
+- [hdl_sim/feistelCipher128by6.v](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6.v:0:0-0:0) — RTL core `tt_um_Samcooper01` (baseline)
+- [hdl_sim/feistelCipher128by6_opt.v](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opt.v:0:0-0:0) — RTL core (final optimized single‑cycle)
+- [hdl_sim/feistelCipher128by6_tb.sv](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_tb.sv:0:0-0:0) — self‑checking testbench (baseline TB)
+- [hdl_sim/feistelCipher128by6_opttb.sv](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/feistelCipher128by6_opttb.sv:0:0-0:0) — self‑checking testbench for optimized RTL
+
+- `hdl_sim/tests/scripts/run_all_tests.sh` — batch runner (WSL shell → Windows Vivado)
+- `hdl_sim/tests/keys/.privatekey<i>` — 16‑byte private keys (e.g., `.privatekey0`)
 - `hdl_sim/tests/plaintext/plaintext<i>.txt` — plaintext bytes (e.g., `plaintext0.txt`)
 - `hdl_sim/tests/ciphertext/ciphertext<i>.bin` — generated ciphertext (ASCII ‘0’/‘1’ bitstring)
 - `hdl_sim/tests/roundtrip/roundtrip<i>.bin` — decrypt output for round‑trip check
 - `hdl_sim/tests/roundtrip/wave_<i>.wdb` — optional waveform DBs (when enabled)
-- `hdl_sim/tests/scripts/run_all_tests.sh` — batch runner (WSL shell → Windows Vivado)
 
-## Requirements
+- [asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt:0:0-0:0) — clock properties, min period
+- [asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt:0:0-0:0) — worst reg→reg paths (setup)
+- [asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt:0:0-0:0) — vectorless power
 
-- Windows Vivado 2023.2 (other versions likely fine; update paths as needed)
-- WSL (Ubuntu or similar) or Git Bash. Script is written for WSL and calls `vivado.bat` via `cmd.exe`.
+- `asic/optimizations/feistelCipher128by6_opt.v` — RTL snapshot for ASIC (optimized)
+- [asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/clock.rpt:0:0-0:0) — clock properties, min period
+- [asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/max.rpt:0:0-0:0) — worst reg→reg paths (setup)
+- [asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt](cci:7://file:///c:/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/power.rpt:0:0-0:0) — vectorless power
 
-## How it works (high level)
-
-1. The script enumerates tests by index `i`: key `.privatekey<i>` and plaintext `plaintext<i>.txt`.
-2. For each test, it generates a per‑test Tcl that runs `xvlog`/`xelab`/`xsim` with plusargs:
-   - `KEY`, `PT`, `CT`, `RT`, `START`
-3. The testbench:
-   - Loads key and plaintext
-   - Runs encrypt pass, then decrypt pass
-   - Writes `ciphertext<i>.bin` and `roundtrip<i>.bin`
-   - Compares roundtrip output to original plaintext and prints PASS/FAIL
-   - Assertions check protocol/behavior (see below)
-
-## Run (WSL)
-
-From your repo root (or from the script directory):
-
-```bash
-cd /mnt/c/Users/Sam/Desktop/FeistelCIpher-Silicon/128bitFeistelCipher/hdl_sim/tests/scripts
-./run_all_tests.sh
-```
-
-- The script converts WSL paths to Windows forward‑slash paths using `wslpath -m` and quotes plusargs so `xsim` sees correct tokens.
-- Output artifacts:
-  - Logs: `hdl_sim/tests/roundtrip/run_<i>.log`
-  - Ciphertext: `hdl_sim/tests/ciphertext/ciphertext<i>.bin`
-  - Roundtrip: `hdl_sim/tests/roundtrip/roundtrip<i>.bin`
-  - Waveforms (if enabled in the script): `hdl_sim/tests/roundtrip/wave_<i>.wdb`
-
-## Waveforms (optional)
-
-When enabled, the script emits `wave_<i>.wdb` per test.
-
-Open in Vivado GUI:
-
-- File → Open Waveform Database → select `hdl_sim/tests/roundtrip/wave_<i>.wdb`
-
-Signals of interest:
-
-- `clk`, `rst_n`, `ui_in`, `uo_out`, `uio_in[1]` (stop)
-- `feistel_out`, `curr_seg`, `local_key` (internal paths), `sys_state` if bound/exported
 
 ## Testbench features
 
@@ -71,13 +113,6 @@ Signals of interest:
   - **Idle behavior**: when fully idle (not streaming and post‑stop grace window elapsed), `uo_out == 8'h00` and known
   - **Stop latency**: allow a 2‑cycle grace window, then require `uo_out == 0`
   - **Key load**: exactly 16 bytes loaded (TB-side counter)
-
-## Troubleshooting
-
-- **Vivado not found**: Ensure `C:\Xilinx\Vivado\2023.2\bin\vivado.bat` exists. Script calls it via `cmd.exe`.
-- **Plusarg tokenization**: The script uses forward slashes (`C:/...`) and wraps each plusarg as a single quoted token (e.g., `--testplusarg "KEY=C:/..."`).
-- **Batch hang**: The per‑test Tcl uses `-simmode batch -onfinish quit` and an inline Tcl (`log_wave -r /*; run -all; quit -force`). If you disable waveforms, you can switch to `-R` runs.
-- **Assertion prints**: If you see first‑byte X during stream, add one clock between `tb_start_stream()` and streaming bytes. If output lingers after stop, widen the grace window.
 
 ## Roadmap (hardening + sign‑off)
 
@@ -93,11 +128,6 @@ Signals of interest:
   - Compare outputs and (optionally) run with SDF timing
 - **Docs/CI**:
   - Add a concise CI or Makefile; pin Vivado version in README
-
-## Notes
-
-- This design is intended as a learning/demonstration vehicle, not for production crypto use.
-- The batch flow assumes WSL; if you prefer Git Bash, update the path conversions accordingly.
 
 ## Results (STA, reg→reg)
 
@@ -135,28 +165,3 @@ Signals of interest:
   - Non-optimized total: ~4.213 mW (`asic/no_optimizations/.../power.rpt`)
   - Optimized total: ~6.074 mW (`asic/optimizations/.../power.rpt`)
   - Note: Vectorless power does not reflect operand gating benefits. Use activity-based power for realistic results.
-
-## How to reproduce (concise)
-
-- **[simulation]**
-  - Run `hdl_sim/tests/scripts/run_all_tests.sh` (see Run section above). Outputs go to `hdl_sim/tests/{ciphertext,roundtrip}/`.
-- **[STA]**
-  - Use the provided ASIC flow to generate `clock.rpt`, `max.rpt` in:
-    - `asic/no_optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
-    - `asic/optimizations/STA_n_POWER/nom_ff_n40C_1v95/`
-- **[power (vectorless)]**
-  - `report_power` at the same corner produces `power.rpt` in the same folders.
-- **[power (activity-based, recommended)]**
-  - Dump VCD during sim:
-    - SV: add to TB initial: `$dumpfile("wave.vcd"); $dumpvars(0, feistelCipher128by6_tb);`
-    - Or XSim Tcl: `open_vcd wave.vcd; log_vcd [get_objects /*]; run -all; close_vcd`
-  - Convert to SAIF (if needed): `vcd2saif -input wave.vcd -output activity.saif -instance feistelCipher128by6_tb.iDUT`
-  - Re-run `report_power` with SAIF for both builds; save as `power_saif.rpt` in each folder.
-
-## Submission Notes
-
-- The repository includes:
-  - **RTL/TB** with self-checking flow and assertions.
-  - **Reports** for timing and power at `nom_ff_n40C_1v95` for both variants.
-  - **README** documenting methodology, metrics, and reproduction steps.
-- If desired, add a small table in this section capturing your final numbers (period_min, worst reg→reg delay, power) when you freeze the run.
